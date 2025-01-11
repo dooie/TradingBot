@@ -1,0 +1,51 @@
+html {
+  font-size: 14px;
+}
+
+@media (min-width: 768px) {
+  html {
+    font-size: 16px;
+  }
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
+  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+}
+
+html {
+  position: relative;
+  min-height: 100%;
+}
+
+body {
+  margin-bottom: 60px;
+}
+
+* {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+}
+
+.selectors-container {
+    background: #f2f2f2;
+    margin-bottom: 1rem;
+    font-size: 0;
+}
+
+    .selectors-container .col {
+        font-size: 1.2rem;
+        width: calc(50% - 1em);
+        padding: 0.5em;
+        display: inline-block;
+    }
+
+    .selectors-container select {
+        width: 100%;
+        font-size: 16px; /* prevent page zoom in iOS */
+    }
+
+@media (max-width: 768px) {
+    .selectors-container .col {
+        display: block;
+        width: calc(100% - 1em);
+    }
+}

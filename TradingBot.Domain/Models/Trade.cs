@@ -4,9 +4,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ConsoleApp.PoC.Models;
+namespace TradingBot.Domain.Models;
 public class Trade
 {
+    public string Ticker { get; set; }
     public DateTime EntryTime { get; set; }
     public decimal EntryPrice { get; set; }
     public DateTime? ExitTime { get; set; }

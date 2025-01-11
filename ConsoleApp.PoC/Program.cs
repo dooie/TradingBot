@@ -1,104 +1,91 @@
-﻿using ConsoleApp.PoC.Models;
-using ConsoleApp.PoC.Strategies;
+﻿using ConsoleApp.PoC.Strategies;
+using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json.Linq;
+using System.ComponentModel;
 using System.Diagnostics;
+using TradingBot.Api.Services;
+using TradingBot.Domain;
+using TradingBot.Domain.Entities;
+using Microsoft.Extensions.Logging;
+using TradingBot.Domain.Models;
+using Microsoft.Extensions.Configuration;
+using TradingBot.Domain.Settings;
 
 namespace ConsoleApp.PoC;
 
 internal partial class Program
 {
-    private static readonly string apiKey = "R9FFj1qmyjD84ZJ5fyUtES_Bd6SjHprK";
-    private static readonly HttpClient client = new HttpClient();
+    private static IPolygonService _polygonService;
+    private static decimal position;
+    private static decimal entryPrice;
+    public static decimal balance { get; private set; } = 10000;
+    public static List<Trade> trades { get; private set; } = new List<Trade>();
 
     public static async Task Main(string[] args)
     {
-        var now = DateTime.Now;
-        string from = now.AddMonths(-24).ToString("YYYY-MM-DD");
-        string to  = now.AddDays(-1).ToString("YYYY-MM-DD");
+        // Build the configuration
+        var configuration = BuildConfiguration();
 
-        string timespan = "minute";
+        // Set up dependency injection
+        var serviceCollection = new ServiceCollection();
+        ConfigureServices(serviceCollection, configuration);
+
+        // Build the service provider
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+
+        // Example: Access configuration values
+        var appName = configuration["AppSettings:ApplicationName"];
+        var logger = serviceProvider.GetService<ILogger<Program>>();
+        logger.LogInformation($"Starting {appName}...");
+
+        _polygonService = serviceProvider.GetService<PolygonService>(); 
+
+
+        var now = DateTime.Now;
+        string from = now.AddMonths(-1).ToString("yyyy-MM-dd");
+        string to  = now.AddDays(-1).ToString("yyyy-MM-dd");
+
+        TimeFrame timespan = TimeFrame.Minute;
         int multiplier = 1;
+
+        //var tickerTypes = await _polygonService.GetTickerTypes(AssetClass.Stocks, Locale.US);
 
         //string[] tickers = { "AAPL", "MSFT", "GOOGL" };
         string[] tickers = { "AAPL" };
         foreach (var ticker in tickers)
         {
-            var historicalData = await GetHistoricalData(ticker, multiplier, timespan, from, to);
+            var historicalData = await _polygonService.GetAggregateBars(ticker, multiplier, timespan, from, to);
             var signals = GenerateSignals(historicalData);
-            var trades = SimulateTrades(historicalData, signals);
-            DisplayPerformance(trades);
-            DisplayTradeLog(trades);
+            //trades = SimulateTrades(historicalData, signals, ticker);
+            //DisplayPerformance(trades);
+            //DisplayTradeLog(trades);
 
         }
     }
 
-    private static async Task<List<Candle>> GetHistoricalData(string ticker, int multiplier, string timespan, string from, string to)
+    private static IConfiguration BuildConfiguration()
     {
-        // Define the data folder path
-        string dataFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data");
-        var historicalData = new List<Candle>();
-
-        // Ensure the data folder exists
-        if (!Directory.Exists(dataFolder))
-        {
-            Directory.CreateDirectory(dataFolder);
-        }
-
-        // Define the file path for the ticker
-        string filePath = Path.Combine(dataFolder, $"{ticker}.json");
-
-        // Check if the file exists in the data folder
-        if (File.Exists(filePath))
-        {
-            Console.WriteLine($"Loading cached data for {ticker} from {filePath}...");
-            string cachedData = await File.ReadAllTextAsync(filePath);
-            JObject data = JObject.Parse(cachedData);
-            historicalData = ParseHistoricalData(data);
-
-            historicalData = historicalData.Where(c => c.Timestamp >= DateTime.Parse(from) && c.Timestamp <= DateTime.Parse(to)).ToList();
-
-            return historicalData;
-        }
-
-        // If no cache, make an API call
-        Console.WriteLine($"Fetching data from API for {ticker}...");
-        string url = $"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}?adjusted=true&sort=asc&apiKey={apiKey}";
-        var response = await client.GetAsync(url);
-        response.EnsureSuccessStatusCode();
-
-        var responseBody = await response.Content.ReadAsStringAsync();
-        await File.WriteAllTextAsync(filePath, responseBody); // Save JSON to file in the Data folder
-
-        JObject apiData = JObject.Parse(responseBody);
-        historicalData = ParseHistoricalData(apiData);
-        return historicalData;
+        return new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+            .Build();
     }
 
-    private static List<Candle> ParseHistoricalData(JObject data)
+    private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
     {
-        var results = (JArray)data["results"];
-
-        var candles = new List<Candle>();
-        foreach (var result in results)
+        // Add logging
+        services.AddLogging(configure =>
         {
-            candles.Add(new Candle
-            {
-                Timestamp = DateTimeOffset.FromUnixTimeMilliseconds((long)result["t"]).DateTime,
-                Open = (decimal)result["o"],
-                High = (decimal)result["h"],
-                Low = (decimal)result["l"],
-                Close = (decimal)result["c"],
-                Volume = (long)result["v"]
-            });
-        }
+            configure.AddConsole();
+            configure.SetMinimumLevel(LogLevel.Information);
+        });
 
-        foreach (var candle in candles.Take(5)) // Print the first 5 candles
-        {
-            Console.WriteLine($"Candle: Time={candle.Timestamp}, Open={candle.Open}, High={candle.High}, Low={candle.Low}, Close={candle.Close}");
-        }
+        // Bind AppSettings section to AppSettings class
+        var appSettings = configuration.GetSection("AppSettings").Get<AppSettings>();
+        services.AddSingleton(appSettings);
 
 
-        return candles;
+        services.AddTransient<PolygonService>();
     }
 
     private static List<int> GenerateSignals(List<Candle> data)
@@ -119,20 +106,26 @@ internal partial class Program
 
             int signal = 0; // Default to Hold
 
+            // Adjusted Buy Signal Logic
             if (rsi < 30)
             {
-                signal = 1; // Buy based on RSI alone
+                signal = 1; // Strong oversold Buy signal
                 Console.WriteLine($"Standalone Buy signal at {data[i].Timestamp}: RSI={rsi}");
             }
             else if (isAccumulation && rsi < 35)
             {
-                signal = 1; // Buy
-                Console.WriteLine($"Buy signal at {data[i].Timestamp}: RSI={rsi}");
+                signal = 1; // Accumulation + RSI Buy
+                Console.WriteLine($"Buy signal at {data[i].Timestamp}: RSI={rsi}, Accumulation={isAccumulation}");
             }
-            else if (!isAccumulation && rsi > 65)
+
+            // Adjusted Sell Signal Logic
+            if (position > 0) // Only generate sell signals if a position is open
             {
-                signal = -1; // Sell
-                Console.WriteLine($"Sell signal at {data[i].Timestamp}: RSI={rsi}");
+                if (rsi > 60 || (!isAccumulation && rsi > 55))
+                {
+                    signal = -1; // Relaxed Sell signal
+                    Console.WriteLine($"Sell signal at {data[i].Timestamp}: RSI={rsi}, Accumulation={isAccumulation}");
+                }
             }
 
             signals.Add(signal); // Add only one signal per iteration
@@ -149,64 +142,105 @@ internal partial class Program
         return signals;
     }
 
-    private static List<Trade> SimulateTrades(List<Candle> data, List<int> signals)
-    {
-        if (data.Count != signals.Count)
-        {
-            throw new InvalidOperationException($"Mismatch between data count ({data.Count}) and signals count ({signals.Count}).");
-        }
+    //private static List<Trade> SimulateTrades(List<Candle> data, List<int> signals, string ticker)
+    //{
+    //    if (data.Count != signals.Count)
+    //    {
+    //        throw new InvalidOperationException($"Mismatch between data count ({data.Count}) and signals count ({signals.Count}).");
+    //    }
 
-        decimal balance = 10000; // Starting capital
-        decimal position = 0;
-        decimal entryPrice = 0;
+    //    decimal stopLossPercentage = 0.02m; // 2% stop-loss threshold
+    //    decimal trailingStopPercentage = 0.03m; // 3% trailing stop-loss
 
-        var trades = new List<Trade>();
+    //    decimal highestPrice = 0;
 
-        for (int i = 0; i < data.Count; i++)
-        {
-            if (signals[i] == 1 && position == 0) // Buy signal
-            {
-                position = balance / data[i].Close;
-                entryPrice = data[i].Close;
-                balance = 0;
+    //    for (int i = 0; i < data.Count; i++)
+    //    {
+    //        // Track highest price for trailing stop
+    //        if (position > 0 && data[i].High > highestPrice)
+    //        {
+    //            highestPrice = data[i].High;
+    //        }
 
-                trades.Add(new Trade
-                {
-                    EntryTime = data[i].Timestamp,
-                    EntryPrice = entryPrice,
-                    TradeType = "Buy"
-                });
+    //        // Check Trailing Stop-Loss
+    //        if (position > 0 && data[i].Low <= highestPrice * (1 - trailingStopPercentage))
+    //        {
+    //            decimal trailingStopPrice = highestPrice * (1 - trailingStopPercentage);
+    //            balance = position * trailingStopPrice;
 
-                Console.WriteLine($"Buy trade placed at {data[i].Timestamp}: Price={entryPrice}");
-            }
-            else if (signals[i] == -1 && position > 0) // Sell signal
-            {
-                balance = position * data[i].Close;
+    //            trades[^1].ExitPrice = trailingStopPrice;
+    //            trades[^1].ExitTime = DateTime.fr data[i].Timestamp;
+    //            trades[^1].Profit = balance - (position * entryPrice);
 
-                trades[^1].ExitPrice = data[i].Close;
-                trades[^1].ExitTime = data[i].Timestamp;
-                trades[^1].Profit = balance - (position * entryPrice);
+    //            Console.WriteLine($"Trailing stop-loss triggered at {data[i].Timestamp}: Price={trailingStopPrice}, Profit={trades[^1].Profit}");
+    //            position = 0; // Close position
+    //            highestPrice = 0; // Reset for next trade
+    //            continue;
+    //        }
 
-                position = 0;
+    //        // Check Fixed Stop-Loss
+    //        if (position > 0 && data[i].Low <= entryPrice * (1 - stopLossPercentage))
+    //        {
+    //            decimal stopLossPrice = entryPrice * (1 - stopLossPercentage);
+    //            balance = position * stopLossPrice;
 
-                Console.WriteLine($"Sell trade placed at {data[i].Timestamp}: Price={data[i].Close}, Profit={trades[^1].Profit}");
-            }
-        }
+    //            trades[^1].ExitPrice = stopLossPrice;
+    //            trades[^1].ExitTime = data[i].Timestamp;
+    //            trades[^1].Profit = balance - (position * entryPrice);
 
-        // If still holding a position, close it at the last price
-        if (position > 0)
-        {
-            balance = position * data[^1].Close;
+    //            Console.WriteLine($"Fixed stop-loss triggered at {data[i].Timestamp}: Price={stopLossPrice}, Profit={trades[^1].Profit}");
+    //            position = 0; // Close position
+    //            highestPrice = 0; // Reset for next trade
+    //            continue;
+    //        }
 
-            trades[^1].ExitPrice = data[^1].Close;
-            trades[^1].ExitTime = data[^1].Timestamp;
-            trades[^1].Profit = balance - (position * entryPrice);
+    //        // Execute Buy
+    //        if (signals[i] == 1 && position == 0) // Buy signal
+    //        {
+    //            position = balance / data[i].Close;
+    //            entryPrice = data[i].Close;
+    //            balance = 0;
+    //            highestPrice = data[i].Close; // Initialize for trailing stop
 
-            Console.WriteLine($"Final sell trade placed at {data[^1].Timestamp}: Price={data[^1].Close}, Profit={trades[^1].Profit}");
-        }
+    //            trades.Add(new Trade
+    //            {
+    //                Ticker = ticker,
+    //                EntryTime = data[i].Timestamp,
+    //                EntryPrice = entryPrice,
+    //                TradeType = "Buy"
+    //            });
 
-        return trades;
-    }
+    //            Console.WriteLine($"Buy trade placed at {data[i].Timestamp}: Price={entryPrice}");
+    //        }
+    //        // Execute Sell
+    //        else if (signals[i] == -1 && position > 0) // Sell signal
+    //        {
+    //            balance = position * data[i].Close;
+
+    //            trades[^1].ExitPrice = data[i].Close;
+    //            trades[^1].ExitTime = data[i].Timestamp;
+    //            trades[^1].Profit = balance - (position * entryPrice);
+
+    //            Console.WriteLine($"Sell trade placed at {data[i].Timestamp}: Price={data[i].Close}, Profit={trades[^1].Profit}");
+    //            position = 0;
+    //            highestPrice = 0; // Reset for next trade
+    //        }
+    //    }
+
+    //    // If still holding a position, close it at the last price
+    //    if (position > 0)
+    //    {
+    //        balance = position * data[^1].Close;
+
+    //        trades[^1].ExitPrice = data[^1].Close;
+    //        trades[^1].ExitTime = data[^1].Timestamp;
+    //        trades[^1].Profit = balance - (position * entryPrice);
+
+    //        Console.WriteLine($"Final sell trade placed at {data[^1].Timestamp}: Price={data[^1].Close}, Profit={trades[^1].Profit}");
+    //    }
+
+    //    return trades;
+    //}
 
     private static void DisplayPerformance(List<Trade> trades)
     {
@@ -231,13 +265,13 @@ internal partial class Program
     {
         Console.WriteLine("Trade Log:");
         Console.WriteLine(new string('-', 80));
-        Console.WriteLine($"{"Trade Type",-10} {"Entry Time",-20} {"Entry Price",-15} {"Exit Time",-20} {"Exit Price",-15} {"Profit",-10}");
+        Console.WriteLine($"{"Ticker", -10} {"Trade Type",-10} {"Entry Time",-20} {"Entry Price",-15} {"Exit Time",-20} {"Exit Price",-15} {"Profit",-10}");
         Console.WriteLine(new string('-', 80));
 
         foreach (var trade in trades)
         {
             Console.WriteLine(
-                $"{trade.TradeType,-10} {trade.EntryTime,-20} {trade.EntryPrice,-15:C} " +
+                $"{trade.Ticker, -10} {trade.TradeType,-10} {trade.EntryTime,-20} {trade.EntryPrice,-15:C} " +
                 $"{(trade.ExitTime.HasValue ? trade.ExitTime.Value.ToString() : "Open"),-20} " +
                 $"{(trade.ExitPrice.HasValue ? trade.ExitPrice.Value.ToString("C") : "Open"),-15} " +
                 $"{trade.Profit,-10:C}"

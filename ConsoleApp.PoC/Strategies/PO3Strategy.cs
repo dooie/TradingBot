@@ -1,9 +1,9 @@
-﻿using ConsoleApp.PoC.Models;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TradingBot.Domain.Entities;
 
 namespace ConsoleApp.PoC.Strategies;
 internal static class PO3Strategy
