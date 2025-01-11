@@ -5,3 +5,14 @@
 /.vs
 /ConsoleApp.PoC/obj
 /ConsoleApp.PoC/bin/Debug/net8.0
+/TradingBot.Api/bin/Debug/net8.0
+/TradingBot.Api/obj
+/TradingBot.Components/bin/Debug/net8.0
+/TradingBot.Components/obj
+/TradingBot.Domain/obj
+/TradingBot.ServiceClients/obj
+/TradingBot.Web_old/obj
+/TradingBot.Domain/bin/Debug/net8.0
+/TradingBot.ServiceClients/bin/Debug/net8.0
+/TradingBot.Web/bin/Debug/net8.0
+/TradingBot.Web/obj
